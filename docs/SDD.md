@@ -57,12 +57,12 @@
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │                   Router / Dispatcher                 │   │
 │  └─────────────────────────────────────────────────────┘   │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────┐  │
-│  │ Middleware  │ │ Controllers │ │     Services        │  │
-│  │  (Auth,     │ │   (API v1)  │ │  (Business Logic)   │  │
-│  │  CORS,      │ │             │ │                     │  │
-│  │  Validate)  │ │             │ │                     │  │
-│  └─────────────┘ └─────────────┘ └─────────────────────┘  │
+│  ┌─────────────┐ ┌─────────────────────┐ ┌─────────────┐  │
+│  │ Middleware  │ │       Modules        │ │  Services   │  │
+│  │  (Auth,     │ │ (Controllers/V1,     │ │ (Business   │  │
+│  │  CORS,      │ │  Routes/v1, ...)     │ │  Logic)     │  │
+│  │  Validate)  │ │                       │ │             │  │
+│  └─────────────┘ └─────────────────────┘ └─────────────┘  │
 │                            │                                │
 │  ┌─────────────────────────┴─────────────────────────────┐ │
 │  │                    Repository Layer                    │ │
@@ -99,12 +99,13 @@
 
 ### 3.1 Структура модуля
 
-Каждый модуль имеет следующую структуру:
+Каждый модуль владеет своим срезом Presentation/Application/Domain/Infrastructure и самостоятельно версионируется — версия API не выносится в отдельный сквозной каталог (`src/Api/V1`), а живёт внутри `Controllers/` и `Routes/` каждого модуля. Это позволяет поднять `V2` для одного модуля, не трогая остальные, и не создаёт дублирующего дерева `Models/`/`Services/` на уровне `src/`.
 
 ```
 src/Modules/{ModuleName}/
-├── Controllers/          # API контроллеры
-│   └── {ModuleName}Controller.php
+├── Controllers/
+│   └── V1/                # Контроллеры версии v1
+│       └── {ModuleName}Controller.php
 ├── Models/               # Eloquent/ActiveRecord модели
 │   └── {ModuleName}.php
 ├── Services/             # Бизнес-логика
@@ -116,28 +117,29 @@ src/Modules/{ModuleName}/
 │   └── Update{ModuleName}DTO.php
 ├── Validators/           # Валидация входных данных
 │   └── {ModuleName}Validator.php
-├── Routes/               # Определение маршрутов
-│   └── api.php
+├── Routes/
+│   └── v1.php             # Маршруты версии v1 (регистрируются с префиксом /api/v1)
 └── Module.php            # Точка входа модуля
 ```
+
+`src/Core/` содержит сквозные, не привязанные к домену вещи: Router/Dispatcher, DI-контейнер, Kernel, базовые классы контроллеров/репозиториев.
 
 ### 3.2 Описание модулей
 
 #### 3.2.1 Модуль Users (Пользователи)
 
-**Назначение:** Управление пользователями системы.
+**Назначение:** Управление ресурсом пользователя (без выдачи токенов — за это отвечает модуль Auth, см. 3.2.2).
 
 | Метод | Endpoint | Описание |
 |-------|----------|----------|
 | POST | `/api/v1/users/register` | Регистрация |
-| POST | `/api/v1/users/login` | Аутентификация |
 | GET | `/api/v1/users/profile` | Получение профиля |
 | PUT | `/api/v1/users/profile` | Обновление профиля |
 | DELETE | `/api/v1/users/profile` | Удаление аккаунта |
 
 #### 3.2.2 Модуль Auth (Авторизация)
 
-**Назначение:** JWT аутентификация.
+**Назначение:** единая точка входа для аутентификации и жизненного цикла JWT. Все операции входа/выхода идут через этот модуль, а не через Users — это исключает дублирование логики выдачи токенов в двух местах.
 
 | Метод | Endpoint | Описание |
 |-------|----------|----------|
@@ -223,6 +225,34 @@ src/Modules/{ModuleName}/
 | GET | `/api/v1/dashboard/widgets/{name}` | Данные виджета |
 | GET | `/api/v1/dashboard/widgets` | Список доступных виджетов |
 
+#### 3.2.10 Модуль System (Health)
+
+**Назначение:** проверка живости приложения и его зависимостей. Без авторизации (нужен для Docker `healthcheck` и внешнего мониторинга).
+
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| GET | `/api/v1/health` | Статус конкретного PHP-инстанса, обработавшего запрос |
+
+**Пример ответа:**
+```json
+{
+  "success": true,
+  "data": {
+    "status": "ok",
+    "instance": "app_7f3a1c9e2b41",
+    "db": "ok",
+    "uptime": 1345
+  }
+}
+```
+
+`instance` — hostname контейнера (в Docker это его container ID), по которому видно, какая именно реплика `app` ответила.
+
+**Как проверяется живость *всех* PHP-реплик, а не только одной.** Запрос к `/api/v1/health` через `nginx` (порт 8080) всегда попадает только в ту реплику, которую `nginx` выбрал для этого конкретного соединения (см. 6.1.1) — по нему нельзя опросить все реплики разом. Поэтому:
+- каждый контейнер `app` проверяет **сам себя** через `healthcheck` в docker-compose (6.1), вызывая `/api/v1/health` изнутри собственного контейнера, а не через балансировщик;
+- Docker помечает нездоровые контейнеры `unhealthy`, они перестают попадать в DNS-ответ `127.0.0.11` и `nginx` больше не направляет на них трафик;
+- чтобы вручную опросить конкретную реплику, к ней можно обратиться по индексу — `docker-compose exec --index=1 app curl localhost/api/v1/health`, `--index=2` и т.д. — либо посмотреть агрегированный статус через `docker-compose ps` / `docker inspect --format='{{.State.Health.Status}}' <container>`.
+
 ---
 
 ## 4. Модель данных
@@ -230,43 +260,62 @@ src/Modules/{ModuleName}/
 ### 4.1 ER-диаграмма
 
 ```
-┌──────────────┐       ┌──────────────────┐       ┌──────────────┐
-│    users     │       │    wallets       │       │  categories  │
-├──────────────┤       ├──────────────────┤       ├──────────────┤
-│ id (PK)      │◄──┐   │ id (PK)          │   ┌──►│ id (PK)      │
-│ email        │   │   │ user_id (FK)     │───┘   │ name         │
-│ password     │   │   │ name             │       │ type         │
-│ name         │   │   │ currency         │       │ parent_id    │
-│ created_at   │   │   │ balance          │       │ user_id (FK) │
-│ updated_at   │   │   │ is_default       │       └──────────────┘
-└──────────────┘   │   │ created_at       │
-       │           │   └──────────────────┘
-       │           │           │
-       │           │           │
-       ▼           │           ▼
-┌──────────────┐   │   ┌──────────────────┐
-│  settings    │   │   │  transactions    │       ┌──────────────┐
-├──────────────┤   │   ├──────────────────┤       │    tags      │
-│ id (PK)      │   │   │ id (PK)          │       ├──────────────┤
-│ user_id (FK) │   │   │ user_id (FK)     │◄──────┤ id (PK)      │
-│ key          │   │   │ wallet_id (FK)   │       │ name         │
-│ value        │   │   │ category_id (FK) │       │ user_id (FK) │
-│ created_at   │   │   │ type             │       │ color        │
-│ updated_at   │   │   │ amount           │       └──────────────┘
-└──────────────┘   │   │ description      │              │
-                   │   │ date             │              │
-                   │   │ created_at       │              │
-                   │   └──────────────────┘              │
-                   │           │                         │
-                   │           │                         │
-                   │           ▼                         │
-                   │   ┌──────────────────┐              │
-                   └───│ transaction_tag  │──────────────┘
-                       ├──────────────────┤
-                       │ transaction_id   │
-                       │ tag_id           │
-                       └──────────────────┘
+┌──────────────┐     ┌──────────────────┐     ┌──────────────┐
+│    users     │     │     accounts     │     │  categories  │
+├──────────────┤     ├──────────────────┤     ├──────────────┤
+│ id (PK)      │     │ id (PK)          │     │ id (PK)      │
+│ email        │     │ user_id (FK)     │     │ user_id (FK) │
+│ password     │     │ name             │     │ parent_id    │
+│ name         │     │ type             │     │ name         │
+│ created_at   │     │ requisites       │     │ type         │
+│ updated_at   │     │ currency         │     └──────────────┘
+└──────────────┘     │ created_at       │
+                      └──────────────────┘
+
+┌──────────────┐     ┌──────────────────┐     ┌──────────────┐
+│  settings    │     │     wallets      │     │     tags     │
+├──────────────┤     ├──────────────────┤     ├──────────────┤
+│ id (PK)      │     │ id (PK)          │     │ id (PK)      │
+│ user_id (FK) │     │ user_id (FK)     │     │ user_id (FK) │
+│ setting_key  │     │ account_id (FK,  │     │ name         │
+│ value        │     │   nullable)      │     │ color        │
+│ created_at   │     │ name             │     └──────────────┘
+│ updated_at   │     │ currency         │
+└──────────────┘     │ balance          │
+                      │ is_default       │
+                      │ created_at       │
+                      └──────────────────┘
+
+              ┌──────────────────┐     ┌──────────────────┐
+              │   transactions   │     │  transaction_tag │
+              ├──────────────────┤     ├──────────────────┤
+              │ id (PK)          │     │ transaction_id   │
+              │ user_id (FK)     │────►│ tag_id           │
+              │ wallet_id (FK)   │     └──────────────────┘
+              │ category_id (FK) │
+              │ type             │
+              │ amount           │
+              │ description      │
+              │ date             │
+              │ created_at       │
+              └──────────────────┘
 ```
+
+**Связи (FK):**
+- `accounts.user_id` → `users.id`
+- `wallets.user_id` → `users.id`
+- `wallets.account_id` → `accounts.id` (nullable — виртуальный/наличный кошелёк может быть не привязан ни к одному счёту)
+- `categories.user_id` → `users.id`
+- `categories.parent_id` → `categories.id` (self-reference, вложенные категории)
+- `tags.user_id` → `users.id`
+- `settings.user_id` → `users.id`
+- `transactions.user_id` → `users.id`
+- `transactions.wallet_id` → `wallets.id`
+- `transactions.category_id` → `categories.id`
+- `transaction_tag.transaction_id` → `transactions.id`
+- `transaction_tag.tag_id` → `tags.id`
+
+Связь транзакций и тегов — только через `transaction_tag` (many-to-many); прямого FK между `transactions` и `tags` нет.
 
 ### 4.2 Описание таблиц
 
@@ -280,16 +329,42 @@ src/Modules/{ModuleName}/
 | created_at | TIMESTAMP | Дата создания |
 | updated_at | TIMESTAMP | Дата обновления |
 
+#### accounts
+| Поле | Тип | Описание |
+|------|-----|----------|
+| id | BIGINT UNSIGNED PK | Идентификатор |
+| user_id | BIGINT UNSIGNED FK | Владелец |
+| name | VARCHAR(100) | Название (например, "Тинькофф Дебетовая") |
+| type | ENUM('bank','card','cash','e-wallet') | Тип счёта |
+| requisites | VARCHAR(255) NULL | Маскированный номер/реквизиты |
+| currency | CHAR(3) | Валюта (ISO 4217) |
+| created_at | TIMESTAMP | Дата создания |
+
+Представляет реальный источник денег (банковский счёт, карту, наличные). Один счёт может быть привязан к нескольким кошелькам (см. `wallets.account_id`), например при ведении бюджета в разных валютах на одной карте.
+
+#### settings
+| Поле | Тип | Описание |
+|------|-----|----------|
+| id | BIGINT UNSIGNED PK | Идентификатор |
+| user_id | BIGINT UNSIGNED FK | Владелец |
+| setting_key | VARCHAR(100) | Ключ настройки (`key` — зарезервированное слово в MySQL, поэтому колонка называется `setting_key`) |
+| value | TEXT | Значение настройки |
+| created_at | TIMESTAMP | Дата создания |
+| updated_at | TIMESTAMP | Дата обновления |
+
 #### wallets
 | Поле | Тип | Описание |
 |------|-----|----------|
 | id | BIGINT UNSIGNED PK | Идентификатор |
 | user_id | BIGINT UNSIGNED FK | Владелец |
+| account_id | BIGINT UNSIGNED FK NULL | Привязанный счёт (`accounts.id`); NULL — виртуальный/наличный кошелёк без привязки |
 | name | VARCHAR(100) | Название |
 | currency | CHAR(3) | Валюта (ISO 4217) |
-| balance | DECIMAL(15,2) | Текущий баланс |
+| balance | DECIMAL(15,2) | Текущий баланс (денормализованный кэш) |
 | is_default | BOOLEAN | Кошелёк по умолчанию |
 | created_at | TIMESTAMP | Дата создания |
+
+`balance` не редактируется напрямую — пересчитывается сервисным слоем (`TransactionsService`) в той же БД-транзакции, что и создание/изменение/удаление записи в `transactions`, чтобы исключить рассинхронизацию.
 
 #### transactions
 | Поле | Тип | Описание |
@@ -403,6 +478,8 @@ Authorization: Bearer <token>
 
 ### 6.1 Docker конфигурация
 
+Минимальная конфигурация — три сервиса: `nginx` (reverse proxy и балансировщик), `app` (PHP-FPM, масштабируемый) и `db` (MySQL). `nginx` — единственный сервис с портом наружу; `app` доступен только внутри сети `pennywise` и может быть поднят в нескольких репликах командой `docker-compose up -d --scale app=N`.
+
 ```yaml
 # docker-compose.yml
 version: '3.8'
@@ -418,6 +495,13 @@ services:
       - db
     networks:
       - pennywise
+    healthcheck:
+      test: ["CMD", "php", "bin/health-check.php"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    # docker-compose up -d --scale app=N — поднимает N реплик без индивидуальных портов;
+    # трафик к ним приходит только через nginx
 
   nginx:
     build:
@@ -453,6 +537,28 @@ networks:
   pennywise:
     driver: bridge
 ```
+
+### 6.1.1 Балансировка между репликами app
+
+`nginx` проксирует FastCGI-запросы на `app` по имени сервиса. Так как `docker-compose --scale` не даёт статического списка контейнеров, `nginx` резолвит имя `app` через встроенный Docker DNS (`127.0.0.11`), который отдаёт IP всех живых реплик по кругу (round-robin), — за счёт периодического ре-резолва nginx подхватывает новые реплики и перестаёт стучаться в удалённые:
+
+```nginx
+# docker/nginx/nginx.conf (фрагмент)
+resolver 127.0.0.11 valid=10s;
+
+server {
+    listen 80;
+
+    location / {
+        set $php_upstream app:9000;
+        fastcgi_pass $php_upstream;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+}
+```
+
+Живость каждой реплики контролирует не `nginx` (обычный OSS nginx не умеет active health checks для FastCGI-апстримов), а Docker через `healthcheck` сервиса `app`: нездоровый контейнер помечается `unhealthy` и перестаёт попадать в DNS-ответ, автоматически выпадая из ротации. См. также `GET /api/v1/health` (3.2.10) — эндпоинт, который `healthcheck` дёргает изнутри каждого контейнера.
 
 ### 6.2 Переменные окружения
 
@@ -528,21 +634,25 @@ APP_DEBUG=false
 
 ```bash
 # 1. Клонирование
-git clone https://github.com/username/PennyWiseRestApi.git
+git clone https://github.com/SCaeR42/PennyWiseRestApi.git
 cd PennyWiseRestApi
 
 # 2. Конфигурация
 cp .env.example .env
 # Отредактировать .env
 
-# 3. Сборка и запуск
-docker-compose up -d --build
+# 3. Сборка и запуск (2 реплики app за балансировщиком nginx)
+docker-compose up -d --build --scale app=2
 
 # 4. Миграции
 docker-compose exec app php bin/migrate.php
 
-# 5. Проверка
+# 5. Проверка API (ответит одна из реплик — см. поле "instance")
 curl http://localhost:8080/api/v1/health
+
+# 6. Проверка живости КАЖДОЙ реплики (см. 3.2.10) — Docker healthcheck делает это
+#    автоматически, вручную статус смотрится так:
+docker-compose ps app
 ```
 
 ---

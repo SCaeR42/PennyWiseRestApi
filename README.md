@@ -27,19 +27,28 @@ PennyWiseRestApi/
 ├── docker/                    # Docker конфигурации
 │   ├── nginx/
 │   │   ├── Dockerfile
-│   │   └── nginx.conf
+│   │   └── nginx.conf         # Reverse proxy + балансировка между репликами app
 │   ├── php/
 │   │   └── Dockerfile
 │   └── mysql/
 │       └── Dockerfile
-├── src/                       # Исходный код приложения
-│   ├── Api/                   # Контроллеры API (версионные)
-│   │   └── V1/
-│   ├── Core/                  # Ядро приложения
-│   ├── Models/                # Модели данных
-│   ├── Services/              # Бизнес-логика
-│   ├── Modules/               # Модули (Transactions, Tags, etc.)
-│   └── Middleware/            # Middleware (auth, validation)
+├── bin/                        # CLI-скрипты (миграции и т.д.)
+│   └── migrate.php
+├── src/                        # Исходный код приложения
+│   ├── Core/                   # Ядро приложения (Router, DI-контейнер, Kernel)
+│   ├── Modules/                 # Модули (Transactions, Tags, Wallets, Accounts, ...)
+│   │   └── {ModuleName}/
+│   │       ├── Controllers/
+│   │       │   └── V1/          # Версионированные контроллеры модуля
+│   │       ├── Models/
+│   │       ├── Services/
+│   │       ├── Repositories/
+│   │       ├── DTO/
+│   │       ├── Validators/
+│   │       ├── Routes/
+│   │       │   └── v1.php       # Версионированные маршруты модуля
+│   │       └── Module.php
+│   └── Middleware/             # Middleware (auth, validation, CORS)
 ├── config/                    # Конфигурации
 ├── database/                  # Миграции и сиды
 │   ├── migrations/
@@ -50,6 +59,8 @@ PennyWiseRestApi/
 ├── docker-compose.yml
 └── README.md
 ```
+
+Версионирование живёт внутри каждого модуля (`Controllers/V1`, `Routes/v1.php`), а не в отдельном сквозном каталоге — это позволяет добавить `V2` конкретному модулю, не трогая остальные, и не дублирует Models/Services на два уровня (общий и модульный).
 
 ### Версионирование API
 
@@ -75,12 +86,15 @@ API версионируется через URL: `/api/v1/...`, `/api/v2/...`
 
 ## Docker окружение
 
-Проект использует Docker Compose с тремя сервисами:
+Проект использует Docker Compose минимум с тремя сервисами:
 
 | Сервис | Описание | Порт |
 |--------|----------|------|
-| `app` | PHP-FPM + Nginx | 8080 |
+| `nginx` | Reverse proxy и балансировщик нагрузки между репликами `app` | 8080 → 80 |
+| `app` | PHP-FPM (масштабируемый, без публичного порта) | 9000 (внутр.) |
 | `db` | MySQL 8.0 | 3306 |
+
+`app` можно масштабировать на несколько реплик — `nginx` распределяет FastCGI-запросы между ними и исключает из ротации упавшие контейнеры (подробнее — [SDD, раздел 6](docs/SDD.md#6-инфраструктура)).
 
 ### Быстрый старт
 
@@ -89,14 +103,17 @@ API версионируется через URL: `/api/v1/...`, `/api/v2/...`
 git clone https://github.com/SCaeR42/PennyWiseRestApi.git
 cd PennyWiseRestApi
 
-# Запустить контейнеры
-docker-compose up -d
+# Запустить контейнеры (можно поднять несколько реплик app)
+docker-compose up -d --scale app=2
 
 # Выполнить миграции
-docker-compose exec app php migrate.php
+docker-compose exec app php bin/migrate.php
 
 # API доступно по адресу
 # http://localhost:8080/api/v1/
+
+# Проверить состояние API и живых PHP-воркеров
+curl http://localhost:8080/api/v1/health
 ```
 
 ## Документация
