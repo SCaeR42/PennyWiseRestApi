@@ -25,38 +25,40 @@ PennyWise Rest API предоставляет backend-инфраструктур
 
 ```
 PennyWiseRestApi/
-├── docker/                    # Docker конфигурации
+├── docker/                     # Docker конфигурации
 │   ├── nginx/
 │   │   ├── Dockerfile
-│   │   └── nginx.conf         # Reverse proxy + балансировка между репликами app
+│   │   └── nginx.conf          # Reverse proxy + балансировка между репликами app
 │   ├── php/
-│   │   └── Dockerfile
+│   │   ├── Dockerfile
+│   │   └── entrypoint.sh       # Пишет /tmp/started_at для uptime в /api/v1/health
 │   └── mysql/
-│       └── Dockerfile
-├── bin/                        # CLI-скрипты (миграции и т.д.)
-│   └── migrate.php
-├── src/                        # Исходный код приложения
-│   ├── Core/                   # Ядро приложения (Router, DI-контейнер, Kernel)
-│   ├── Modules/                 # Модули (Transactions, Tags, Wallets, Accounts, ...)
-│   │   └── {ModuleName}/
-│   │       ├── Controllers/
-│   │       │   └── V1/          # Версионированные контроллеры модуля
-│   │       ├── Models/
-│   │       ├── Services/
-│   │       ├── Repositories/
-│   │       ├── DTO/
-│   │       ├── Validators/
-│   │       ├── Routes/
-│   │       │   └── v1.php       # Версионированные маршруты модуля
-│   │       └── Module.php
-│   └── Middleware/             # Middleware (auth, validation, CORS)
-├── config/                    # Конфигурации
-├── database/                  # Миграции и сиды
-│   ├── migrations/
-│   └── seeds/
-├── public/                    # Публичная директория
-│   └── index.php
-├── tests/                     # Тесты
+│       ├── Dockerfile
+│       └── my.cnf              # utf8mb4 по умолчанию
+├── bin/                         # CLI-скрипты
+│   ├── migrate.php              # Раннер миграций (database/migrations/*.sql)
+│   └── health-check.php         # Проверка БД для Docker healthcheck
+├── src/                         # Исходный код приложения
+│   ├── Core/                    # Router, DI-контейнер, Kernel, Request/Response, JWT
+│   ├── Middleware/              # Auth (JWT), CORS
+│   └── Modules/                 # Модули (Transactions, Tags, Wallets, Accounts, ...)
+│       └── {ModuleName}/
+│           ├── Controllers/
+│           │   └── V1/          # Версионированные контроллеры модуля
+│           ├── Models/
+│           ├── Services/
+│           ├── Repositories/
+│           ├── DTO/
+│           ├── Validators/
+│           ├── Routes/
+│           │   └── v1.php       # Версионированные маршруты модуля
+│           └── Module.php
+├── database/
+│   └── migrations/              # SQL-миграции, применяются bin/migrate.php по порядку
+├── public/                      # Публичная директория (document root nginx)
+│   └── index.php                # Front controller
+├── tests/                       # PHPUnit-тесты
+├── composer.json
 ├── docker-compose.yml
 └── README.md
 ```

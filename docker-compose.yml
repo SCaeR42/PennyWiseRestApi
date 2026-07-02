@@ -1,0 +1,76 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    volumes:
+      - ./:/var/www/html
+      - vendor_data:/var/www/html/vendor
+    dns_opt:
+      - "timeout:2"
+      - "attempts:1"
+    environment:
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME:-pennywise}
+      DB_USER: ${DB_USER:-pennywise_user}
+      DB_PASSWORD: ${DB_PASSWORD:-secret}
+      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-random-secret}
+      JWT_TTL: ${JWT_TTL:-3600}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-604800}
+      APP_ENV: ${APP_ENV:-production}
+      APP_DEBUG: ${APP_DEBUG:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - pennywise
+    healthcheck:
+      test: ["CMD", "php", "bin/health-check.php"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
+    ports:
+      - "8080:80"
+    volumes:
+      - ./:/var/www/html
+      - vendor_data:/var/www/html/vendor
+    depends_on:
+      - app
+    networks:
+      - pennywise
+
+  db:
+    build:
+      context: .
+      dockerfile: docker/mysql/Dockerfile
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_secret}
+      MYSQL_DATABASE: ${DB_NAME:-pennywise}
+      MYSQL_USER: ${DB_USER:-pennywise_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - pennywise
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD:-root_secret}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mysql_data:
+  vendor_data:
+
+networks:
+  pennywise:
+    driver: bridge

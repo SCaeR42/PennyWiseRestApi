@@ -45,5 +45,7 @@ yarn-error.log*
 composer.phar
 
 # PHPUnit
-phpunit.xml
 .phpunit.cache/
+
+# Storage
+/storage/*.pid

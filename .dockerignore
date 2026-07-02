@@ -1,0 +1,10 @@
+.git
+.idea
+.vscode
+vendor
+.env
+.env.local
+*.log
+/coverage
+.phpunit.cache
+.phpunit.result.cache

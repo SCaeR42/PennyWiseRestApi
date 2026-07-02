@@ -548,21 +548,24 @@ Authorization: Bearer <token>
 
 ### 6.1 Docker конфигурация
 
-Минимальная конфигурация — три сервиса: `nginx` (reverse proxy и балансировщик), `app` (PHP-FPM, масштабируемый) и `db` (MySQL). `nginx` — единственный сервис с портом наружу; `app` доступен только внутри сети `pennywise` и может быть поднят в нескольких репликах командой `docker-compose up -d --scale app=N`.
+Минимальная конфигурация — три сервиса: `nginx` (reverse proxy и балансировщик), `app` (PHP-FPM, масштабируемый) и `db` (MySQL, свой образ на базе `docker/mysql/Dockerfile` с utf8mb4 по умолчанию). `nginx` — единственный сервис с портом наружу; `app` доступен только внутри сети `pennywise` и может быть поднят в нескольких репликах командой `docker-compose up -d --scale app=N`. `dns_opt` на `app` задаёт таймаут резолвера (`timeout:2 attempts:1`), которым пользуется `MxRecordChecker` модуля EmailVerification (3.2.11) — PHP-функции DNS не принимают таймаут per-call. `vendor_data` — именованный том поверх бинд-маунта исходников: `vendor/` не коммитится в git, поэтому при `docker-compose up` на чистом клоне он должен переживать поверх `./:/var/www/html`, а не быть стёртым пустой host-директорией.
 
 ```yaml
 # docker-compose.yml
-version: '3.8'
-
 services:
   app:
     build:
-      context: ./docker/php
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: docker/php/Dockerfile
     volumes:
       - ./:/var/www/html
+      - vendor_data:/var/www/html/vendor
+    dns_opt:
+      - "timeout:2"
+      - "attempts:1"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     networks:
       - pennywise
     healthcheck:
@@ -570,24 +573,28 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+      start_period: 10s
     # docker-compose up -d --scale app=N — поднимает N реплик без индивидуальных портов;
     # трафик к ним приходит только через nginx
 
   nginx:
     build:
-      context: ./docker/nginx
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: docker/nginx/Dockerfile
     ports:
       - "8080:80"
     volumes:
       - ./:/var/www/html
+      - vendor_data:/var/www/html/vendor
     depends_on:
       - app
     networks:
       - pennywise
 
   db:
-    image: mysql:8.0
+    build:
+      context: .
+      dockerfile: docker/mysql/Dockerfile
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
       MYSQL_DATABASE: pennywise
@@ -599,9 +606,15 @@ services:
       - mysql_data:/var/lib/mysql
     networks:
       - pennywise
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   mysql_data:
+  vendor_data:
 
 networks:
   pennywise:
@@ -619,14 +632,17 @@ resolver 127.0.0.11 valid=10s;
 server {
     listen 80;
 
-    location / {
+    location ~ \.php$ {
         set $php_upstream app:9000;
         fastcgi_pass $php_upstream;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_param SCRIPT_FILENAME $document_root/index.php;
+        fastcgi_param HTTP_AUTHORIZATION $http_authorization;
         include fastcgi_params;
     }
 }
 ```
+
+`fastcgi_param HTTP_AUTHORIZATION` — без этой строки стандартный `fastcgi_params` не прокидывает заголовок `Authorization` в PHP-FPM, и JWT-эндпоинты получают `UNAUTHORIZED` даже с валидным токеном.
 
 Живость каждой реплики контролирует не `nginx` (обычный OSS nginx не умеет active health checks для FastCGI-апстримов), а Docker через `healthcheck` сервиса `app`: нездоровый контейнер помечается `unhealthy` и перестаёт попадать в DNS-ответ, автоматически выпадая из ротации. См. также `GET /api/v1/health` (3.2.10) — эндпоинт, который `healthcheck` дёргает изнутри каждого контейнера.
 
@@ -641,8 +657,8 @@ DB_USER=pennywise_user
 DB_PASSWORD=secret
 DB_ROOT_PASSWORD=root_secret
 
-# JWT
-JWT_SECRET=your-secret-key
+# JWT (HS256 требует секрет длиной от 32 байт — короче firebase/php-jwt отклонит с DomainException)
+JWT_SECRET=your-secret-key-of-at-least-32-bytes
 JWT_TTL=3600
 JWT_REFRESH_TTL=604800
 
