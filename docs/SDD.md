@@ -22,6 +22,7 @@
 - Категоризации и тегирования операций
 - Визуализации данных через виджеты дашборда
 - Управления пользователями и их настройками
+- Вспомогательной верификации email-строк (формат + MX-запись)
 
 ### 1.3 Глоссарий
 
@@ -33,6 +34,7 @@
 | Category | Категория дохода или расхода |
 | Tag | Произвольный тег для классификации |
 | Widget | Компонент дашборда с данными |
+| MX-запись | DNS-запись домена, указывающая почтовые серверы, ответственные за приём почты для этого домена |
 
 ---
 
@@ -252,6 +254,74 @@ src/Modules/{ModuleName}/
 - каждый контейнер `app` проверяет **сам себя** через `healthcheck` в docker-compose (6.1), вызывая `/api/v1/health` изнутри собственного контейнера, а не через балансировщик;
 - Docker помечает нездоровые контейнеры `unhealthy`, они перестают попадать в DNS-ответ `127.0.0.11` и `nginx` больше не направляет на них трафик;
 - чтобы вручную опросить конкретную реплику, к ней можно обратиться по индексу — `docker-compose exec --index=1 app curl localhost/api/v1/health`, `--index=2` и т.д. — либо посмотреть агрегированный статус через `docker-compose ps` / `docker inspect --format='{{.State.Health.Status}}' <container>`.
+
+#### 3.2.11 Модуль EmailVerification (Верификация email)
+
+**Назначение:** вспомогательная массовая проверка списка строк на то, являются ли они валидными, потенциально доставляемыми email-адресами — без отправки письма-подтверждения. Используется, например, при импорте контактов или предварительной чистке пользовательского ввода.
+
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| POST | `/api/v1/email-verification/verify` | Массовая проверка списка строк на валидность email |
+
+**Алгоритм проверки** (для каждой строки из списка, последовательно):
+1. **Формат** — строка проверяется регулярным выражением (упрощённый RFC 5322). Если не проходит — сразу `invalid_format`, DNS не запрашивается.
+2. **MX-запись** — если формат валиден, для домена (часть после `@`) выполняется DNS-запрос MX-записей (`dns_get_record($domain, DNS_MX)`).
+3. **Fallback на A/AAAA** — если MX-записей нет, по RFC 5321 почта может приниматься и по обычной A/AAAA-записи домена, поэтому перед тем как признать домен недоставляемым, дополнительно проверяется A/AAAA.
+4. Полноценная отправка письма и SMTP-хендшейк (`RCPT TO`) **не выполняются** — это осознанное ограничение уровня "лёгкой" верификации, а не полной.
+
+**Оптимизации batch-проверки:**
+- Результат DNS-резолва домена кэшируется в рамках одного запроса — если в списке несколько адресов на одном домене (частый случай), DNS запрашивается один раз на домен, а не на email.
+- Таймаут на резолв одного домена — 2 секунды; при таймауте/сетевой ошибке домену присваивается статус `lookup_failed` (не `no_mx_record` — это разные вещи: недоставляемый домен vs. невозможность сейчас проверить).
+- Размер списка ограничен: **не более 100 строк за один запрос** (см. `MAX_BATCH_SIZE` в валидаторе) — защищает от DoS через дорогие DNS-запросы; для больших списков предполагается постраничная отправка клиентом. Дополнительно рекомендуется закрыть эндпоинт общим `Rate Limiting` (см. 7.1).
+
+**Запрос:**
+```json
+{
+  "emails": [
+    "user@gmail.com",
+    "invalid-email",
+    "test@nonexistent-domain-xyz.invalid"
+  ]
+}
+```
+
+**Ответ:**
+```json
+{
+  "success": true,
+  "data": {
+    "results": [
+      { "email": "user@gmail.com", "domain": "gmail.com", "valid": true, "status": "valid" },
+      { "email": "invalid-email", "domain": null, "valid": false, "status": "invalid_format" },
+      { "email": "test@nonexistent-domain-xyz.invalid", "domain": "nonexistent-domain-xyz.invalid", "valid": false, "status": "no_mx_record" }
+    ],
+    "summary": { "total": 3, "valid": 1, "invalid": 2 }
+  }
+}
+```
+
+`status` — одно из: `valid`, `invalid_format`, `no_mx_record`, `lookup_failed`. Поле `valid` — простой алиас `status === "valid"` для клиентов, которым не нужна детализация причины.
+
+Если тело запроса некорректно (не массив, пустой список, либо длина превышает лимит) — эндпоинт возвращает `400` со стандартной структурой ошибки (5.1), например `{ "code": "BATCH_TOO_LARGE", "message": "Maximum 100 emails per request" }`.
+
+**Структура модуля** (отличается от стандартного шаблона 3.1 — сервис не хранит состояние и не имеет своей таблицы в БД, поэтому в нём нет `Models/`/`Repositories/`):
+```
+src/Modules/EmailVerification/
+├── Controllers/
+│   └── V1/
+│       └── EmailVerificationController.php
+├── Services/
+│   ├── EmailVerificationService.php   # оркестрация: формат → MX → fallback A/AAAA
+│   ├── EmailFormatValidator.php       # regex-проверка формата
+│   └── MxRecordChecker.php            # DNS-запрос с таймаутом и кэшем на домен в рамках запроса
+├── DTO/
+│   └── VerifyEmailsRequestDTO.php
+├── Validators/
+│   └── VerifyEmailsRequestValidator.php  # структура запроса + лимит batch
+├── Routes/
+│   └── v1.php
+└── Module.php
+```
 
 ---
 
@@ -695,6 +765,16 @@ curl -X POST http://localhost:8080/api/v1/transactions \
 ```bash
 curl http://localhost:8080/api/v1/dashboard/widgets/balance-chart \
   -H "Authorization: Bearer <token>"
+```
+
+**Верификация списка email:**
+```bash
+curl -X POST http://localhost:8080/api/v1/email-verification/verify \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "emails": ["user@gmail.com", "invalid-email", "test@nonexistent-domain-xyz.invalid"]
+  }'
 ```
 
 ---
