@@ -119,9 +119,12 @@ docker-compose exec app php bin/migrate.php
 curl http://localhost:8080/api/v1/health
 ```
 
+Интерактивная документация (Swagger UI) — [http://localhost:8080/docs/](http://localhost:8080/docs/), спецификация — [`public/openapi.yaml`](public/openapi.yaml) (OpenAPI 3.0.3).
+
 ## Документация
 
 - [Software Design Description](docs/SDD.md) — детальное описание архитектуры и дизайна
+- [OpenAPI-спецификация](public/openapi.yaml) — интерактивно на `/docs/` запущенного инстанса
 
 ## Лицензия
 
