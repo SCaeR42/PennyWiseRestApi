@@ -107,10 +107,10 @@ git clone https://github.com/SCaeR42/PennyWiseRestApi.git
 cd PennyWiseRestApi
 
 # Запустить контейнеры (можно поднять несколько реплик app)
-docker-compose up -d --scale app=2
+docker compose up -d --scale app=2
 
 # Выполнить миграции
-docker-compose exec app php bin/migrate.php
+docker compose exec app php bin/migrate.php
 
 # API доступно по адресу
 # http://localhost:8080/api/v1/

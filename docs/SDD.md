@@ -251,9 +251,9 @@ src/Modules/{ModuleName}/
 `instance` — hostname контейнера (в Docker это его container ID), по которому видно, какая именно реплика `app` ответила.
 
 **Как проверяется живость *всех* PHP-реплик, а не только одной.** Запрос к `/api/v1/health` через `nginx` (порт 8080) всегда попадает только в ту реплику, которую `nginx` выбрал для этого конкретного соединения (см. 6.1.1) — по нему нельзя опросить все реплики разом. Поэтому:
-- каждый контейнер `app` проверяет **сам себя** через `healthcheck` в docker-compose (6.1), вызывая `/api/v1/health` изнутри собственного контейнера, а не через балансировщик;
+- каждый контейнер `app` проверяет **сам себя** через `healthcheck` в `docker-compose.yml` (6.1), вызывая `/api/v1/health` изнутри собственного контейнера, а не через балансировщик;
 - Docker помечает нездоровые контейнеры `unhealthy`, они перестают попадать в DNS-ответ `127.0.0.11` и `nginx` больше не направляет на них трафик;
-- чтобы вручную опросить конкретную реплику, к ней можно обратиться по индексу — `docker-compose exec --index=1 app curl localhost/api/v1/health`, `--index=2` и т.д. — либо посмотреть агрегированный статус через `docker-compose ps` / `docker inspect --format='{{.State.Health.Status}}' <container>`.
+- чтобы вручную опросить конкретную реплику, к ней можно обратиться по индексу — `docker compose exec --index=1 app curl localhost/api/v1/health`, `--index=2` и т.д. — либо посмотреть агрегированный статус через `docker compose ps` / `docker inspect --format='{{.State.Health.Status}}' <container>`.
 
 #### 3.2.11 Модуль EmailVerification (Верификация email)
 
@@ -552,7 +552,7 @@ Authorization: Bearer <token>
 
 ### 6.1 Docker конфигурация
 
-Минимальная конфигурация — три сервиса: `nginx` (reverse proxy и балансировщик), `app` (PHP-FPM, масштабируемый) и `db` (MySQL, свой образ на базе `docker/mysql/Dockerfile` с utf8mb4 по умолчанию). `nginx` — единственный сервис с портом наружу; `app` доступен только внутри сети `pennywise` и может быть поднят в нескольких репликах командой `docker-compose up -d --scale app=N`. `dns_opt` на `app` задаёт таймаут резолвера (`timeout:2 attempts:1`), которым пользуется `MxRecordChecker` модуля EmailVerification (3.2.11) — PHP-функции DNS не принимают таймаут per-call. `vendor_data` — именованный том поверх бинд-маунта исходников: `vendor/` не коммитится в git, поэтому при `docker-compose up` на чистом клоне он должен переживать поверх `./:/var/www/html`, а не быть стёртым пустой host-директорией.
+Минимальная конфигурация — три сервиса: `nginx` (reverse proxy и балансировщик), `app` (PHP-FPM, масштабируемый) и `db` (MySQL, свой образ на базе `docker/mysql/Dockerfile` с utf8mb4 по умолчанию). `nginx` — единственный сервис с портом наружу; `app` доступен только внутри сети `pennywise` и может быть поднят в нескольких репликах командой `docker compose up -d --scale app=N`. `dns_opt` на `app` задаёт таймаут резолвера (`timeout:2 attempts:1`), которым пользуется `MxRecordChecker` модуля EmailVerification (3.2.11) — PHP-функции DNS не принимают таймаут per-call. `vendor_data` — именованный том поверх бинд-маунта исходников: `vendor/` не коммитится в git, поэтому при `docker compose up` на чистом клоне он должен переживать поверх `./:/var/www/html`, а не быть стёртым пустой host-директорией.
 
 ```yaml
 # docker-compose.yml
@@ -578,7 +578,7 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
-    # docker-compose up -d --scale app=N — поднимает N реплик без индивидуальных портов;
+    # docker compose up -d --scale app=N — поднимает N реплик без индивидуальных портов;
     # трафик к ним приходит только через nginx
 
   nginx:
@@ -627,7 +627,7 @@ networks:
 
 ### 6.1.1 Балансировка между репликами app
 
-`nginx` проксирует FastCGI-запросы на `app` по имени сервиса. Так как `docker-compose --scale` не даёт статического списка контейнеров, `nginx` резолвит имя `app` через встроенный Docker DNS (`127.0.0.11`), который отдаёт IP всех живых реплик по кругу (round-robin), — за счёт периодического ре-резолва nginx подхватывает новые реплики и перестаёт стучаться в удалённые:
+`nginx` проксирует FastCGI-запросы на `app` по имени сервиса. Так как `docker compose --scale` не даёт статического списка контейнеров, `nginx` резолвит имя `app` через встроенный Docker DNS (`127.0.0.11`), который отдаёт IP всех живых реплик по кругу (round-robin), — за счёт периодического ре-резолва nginx подхватывает новые реплики и перестаёт стучаться в удалённые:
 
 ```nginx
 # docker/nginx/nginx.conf (фрагмент)
@@ -732,17 +732,17 @@ cp .env.example .env
 # Отредактировать .env
 
 # 3. Сборка и запуск (2 реплики app за балансировщиком nginx)
-docker-compose up -d --build --scale app=2
+docker compose up -d --build --scale app=2
 
 # 4. Миграции
-docker-compose exec app php bin/migrate.php
+docker compose exec app php bin/migrate.php
 
 # 5. Проверка API (ответит одна из реплик — см. поле "instance")
 curl http://localhost:8080/api/v1/health
 
 # 6. Проверка живости КАЖДОЙ реплики (см. 3.2.10) — Docker healthcheck делает это
 #    автоматически, вручную статус смотрится так:
-docker-compose ps app
+docker compose ps app
 ```
 
 ---
