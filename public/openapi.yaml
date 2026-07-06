@@ -44,6 +44,11 @@ paths:
       tags: [Auth]
       operationId: issueToken
       summary: Получение JWT токена (логин)
+      description: >
+        Тестовый пользователь для локальной среды разработки: `alice@example.com` /
+        `supersecret` (уже засеян в БД). Полученный `access_token` подставь в кнопку
+        **Authorize** вверху страницы — тогда все закрытые замком эндпоинты будут
+        ходить с этим токеном.
       security: []
       requestBody:
         required: true
@@ -51,6 +56,9 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: alice@example.com
+              password: supersecret
       responses:
         '200':
           description: Пара access/refresh токенов
@@ -1009,8 +1017,8 @@ components:
       type: object
       required: [email, password]
       properties:
-        email: { type: string, format: email }
-        password: { type: string }
+        email: { type: string, format: email, example: alice@example.com }
+        password: { type: string, example: supersecret }
 
     TokenPairResponse:
       type: object

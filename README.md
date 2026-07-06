@@ -121,6 +121,38 @@ curl http://localhost:8080/api/v1/health
 
 Интерактивная документация (Swagger UI) — [http://localhost:8080/docs/](http://localhost:8080/docs/), спецификация — [`public/openapi.yaml`](public/openapi.yaml) (OpenAPI 3.0.3).
 
+## Тестирование
+
+Проект покрыт unit-тестами (**PHPUnit 11**). Конфигурация — [`phpunit.xml`](phpunit.xml), тесты находятся в директории [`tests/`](tests/).
+
+### Запуск тестов
+
+```bash
+# Локально — запустить все тесты
+vendor\bin\phpunit
+
+# Локально — запустить конкретный файл
+vendor\bin\phpunit tests/Unit/Core/ValidationTest.php
+
+# Локально — фильтрация по имени теста
+vendor\bin\phpunit --filter testMethodName
+
+# В Docker-контейнере
+docker compose exec app vendor/bin/phpunit
+
+# Разовый запуск без запущенных контейнеров
+docker compose run --rm app vendor/bin/phpunit
+```
+
+### Структура тестов
+
+```
+tests/
+└── Unit/
+    ├── Core/                    # Тесты ядра (Validation, Request, Router, ...)
+    └── Modules/                 # Тесты модулей (EmailVerification, ...)
+```
+
 ## Документация
 
 - [Software Design Description](docs/SDD.md) — детальное описание архитектуры и дизайна
