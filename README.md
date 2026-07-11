@@ -126,7 +126,7 @@ health — [http://api/v1/healths/](http://localhost:8080/api/v1/health)
 
 ## Тестирование
 
-Проект покрыт unit-тестами (**PHPUnit 11**). Конфигурация — [`phpunit.xml`](phpunit.xml), тесты находятся в директории [`tests/`](tests/).
+Проект покрыт unit- и интеграционными тестами (**PHPUnit 11**, 34 теста). Конфигурация — [`phpunit.xml`](phpunit.xml), тесты находятся в директории [`tests/`](tests/).
 
 ### Запуск тестов
 
@@ -151,10 +151,22 @@ docker compose run --rm app vendor/bin/phpunit
 
 ```
 tests/
+├── Support/
+│   └── DnsResolverStub.php              # Мок checkdnsrr() для MxRecordChecker (см. ниже)
 └── Unit/
-    ├── Core/                    # Тесты ядра (Validation, Request, Router, ...)
-    └── Modules/                 # Тесты модулей (EmailVerification, ...)
+    ├── Core/                             # Router, Container, Jwt, Validation
+    └── Modules/
+        └── EmailVerification/
+            ├── EmailFormatValidatorTest.php
+            ├── MxRecordCheckerTest.php          # MX / A-fallback / no_mx_record / lookup_failed / кэш
+            └── EmailVerificationServiceTest.php # invalid_format не вызывает DNS-резолвер вообще
 ```
+
+### Мок DNS-резолвера
+
+`MxRecordChecker` вызывает глобальную `checkdnsrr()` — гонять реальный DNS в юнит-тестах не хочется (флаки, зависимость от сети). `tests/Support/DnsResolverStub.php` объявляет функцию `checkdnsrr()` в том же неймспейсе, что и `MxRecordChecker` (`App\Modules\EmailVerification\Services`): PHP при неквалифицированном вызове функции сначала ищет её в неймспейсе вызывающего файла и только потом откатывается на глобальную. Стаб подключается только через `composer.json → autoload-dev.files`, поэтому в сборке без dev-зависимостей (`composer install --no-dev`) его не существует, и `MxRecordChecker` всегда резолвит через настоящий `checkdnsrr()` — сам класс ради тестируемости не менялся.
+
+`EmailVerificationServiceTest` на этом же стабе явно подтверждает то, что раньше было неявным допущением из чтения кода: для email с невалидным форматом DNS-резолвер вообще не вызывается.
 
 ## Документация
 

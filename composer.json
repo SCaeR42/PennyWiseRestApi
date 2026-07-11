@@ -21,7 +21,10 @@
     "autoload-dev": {
         "psr-4": {
             "Tests\\": "tests/"
-        }
+        },
+        "files": [
+            "tests/Support/DnsResolverStub.php"
+        ]
     },
     "config": {
         "sort-packages": true,
