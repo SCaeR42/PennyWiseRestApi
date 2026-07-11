@@ -121,6 +121,9 @@ curl http://localhost:8080/api/v1/health
 
 Интерактивная документация (Swagger UI) — [http://localhost:8080/docs/](http://localhost:8080/docs/), спецификация — [`public/openapi.yaml`](public/openapi.yaml) (OpenAPI 3.0.3).
 
+health — [http://api/v1/healths/](http://localhost:8080/api/v1/health)
+
+
 ## Тестирование
 
 Проект покрыт unit-тестами (**PHPUnit 11**). Конфигурация — [`phpunit.xml`](phpunit.xml), тесты находятся в директории [`tests/`](tests/).
