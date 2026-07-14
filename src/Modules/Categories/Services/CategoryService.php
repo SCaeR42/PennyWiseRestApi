@@ -68,6 +68,14 @@ final class CategoryService
         $this->categories->delete($id, $userId);
     }
 
+    /**
+     * Вложенность категорий ограничена одним уровнем (root -> дети, без внуков).
+     * Это не только продуктовое ограничение, но и структурная защита от циклов
+     * A-B-C-A любой длины: цикл требует, чтобы какой-то узел одновременно был
+     * и родителем, и потомком в цепочке, а тут узел не может стать родителем,
+     * если у него уже есть родитель, и не может получить родителя, если у него
+     * уже есть дети — вместе эти два правила не оставляют пути замкнуть цикл.
+     */
     private function assertParentBelongsToUser(int $parentId, int $userId, ?int $excludeId): void
     {
         if ($parentId === $excludeId) {
@@ -76,9 +84,22 @@ final class CategoryService
             );
         }
 
-        if ($this->categories->findForUser($parentId, $userId) === null) {
+        $parent = $this->categories->findForUser($parentId, $userId);
+        if ($parent === null) {
             throw BadRequestException::validation(
                 [['field' => 'parent_id', 'message' => 'Parent category not found']],
+            );
+        }
+
+        if ($parent->parentId !== null) {
+            throw BadRequestException::validation(
+                [['field' => 'parent_id', 'message' => 'Nesting is limited to one level: the chosen parent already has a parent of its own']],
+            );
+        }
+
+        if ($excludeId !== null && $this->categories->hasChildren($excludeId, $userId)) {
+            throw BadRequestException::validation(
+                [['field' => 'parent_id', 'message' => 'This category has child categories and cannot be nested under another one']],
             );
         }
     }

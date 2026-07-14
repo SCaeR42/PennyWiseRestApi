@@ -69,4 +69,19 @@ final class CategoryRepository
         $stmt = $this->pdo->prepare('DELETE FROM categories WHERE id = :id AND user_id = :user_id');
         $stmt->execute(['id' => $id, 'user_id' => $userId]);
     }
+
+    /**
+     * Есть ли у категории дочерние. Используется, чтобы не дать категории с
+     * детьми получить родителя — вложенность ограничена одним уровнем
+     * (root -> дети, без внуков), см. CategoryService::assertParentBelongsToUser().
+     */
+    public function hasChildren(int $categoryId, int $userId): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT 1 FROM categories WHERE parent_id = :parent_id AND user_id = :user_id LIMIT 1'
+        );
+        $stmt->execute(['parent_id' => $categoryId, 'user_id' => $userId]);
+
+        return $stmt->fetchColumn() !== false;
+    }
 }

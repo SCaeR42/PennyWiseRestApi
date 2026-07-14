@@ -78,6 +78,29 @@ final class WalletRepository
     }
 
     /**
+     * Снимает is_default со всех кошельков пользователя (опционально кроме одного) —
+     * гарантирует не более одного default-кошелька на пользователя (вызывается
+     * сервисным слоем перед установкой нового default в той же БД-транзакции).
+     */
+    public function clearDefaultForUser(int $userId, ?int $exceptWalletId = null): void
+    {
+        if ($exceptWalletId !== null) {
+            $stmt = $this->pdo->prepare(
+                'UPDATE wallets SET is_default = 0
+                 WHERE user_id = :user_id AND id != :except_id AND is_default = 1'
+            );
+            $stmt->execute(['user_id' => $userId, 'except_id' => $exceptWalletId]);
+
+            return;
+        }
+
+        $stmt = $this->pdo->prepare(
+            'UPDATE wallets SET is_default = 0 WHERE user_id = :user_id AND is_default = 1'
+        );
+        $stmt->execute(['user_id' => $userId]);
+    }
+
+    /**
      * Пересчитывает balance кошелька как сумму income/expense транзакций.
      * Вызывается сервисным слоем Transactions в той же БД-транзакции, что и
      * запись изменений в transactions (см. SDD 4.2).

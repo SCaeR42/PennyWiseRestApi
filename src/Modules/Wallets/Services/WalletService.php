@@ -15,6 +15,7 @@ use App\Modules\Wallets\Repositories\WalletRepository;
 final class WalletService
 {
     public function __construct(
+        private readonly \PDO $pdo,
         private readonly WalletRepository $wallets,
         private readonly AccountRepository $accounts,
     ) {
@@ -43,7 +44,21 @@ final class WalletService
             );
         }
 
-        return $this->wallets->create($userId, $dto->accountId, $dto->name, $dto->currency, $dto->isDefault);
+        if (!$dto->isDefault) {
+            return $this->wallets->create($userId, $dto->accountId, $dto->name, $dto->currency, false);
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            $this->wallets->clearDefaultForUser($userId);
+            $wallet = $this->wallets->create($userId, $dto->accountId, $dto->name, $dto->currency, true);
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
+
+        return $wallet;
     }
 
     public function update(int $id, int $userId, UpdateWalletDTO $dto): Wallet
@@ -61,7 +76,21 @@ final class WalletService
             $fields['is_default'] = $dto->isDefault ? 1 : 0;
         }
 
-        return $this->wallets->update($id, $userId, $fields);
+        if ($dto->isDefault !== true) {
+            return $this->wallets->update($id, $userId, $fields);
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            $this->wallets->clearDefaultForUser($userId, $id);
+            $wallet = $this->wallets->update($id, $userId, $fields);
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
+
+        return $wallet;
     }
 
     public function delete(int $id, int $userId): void

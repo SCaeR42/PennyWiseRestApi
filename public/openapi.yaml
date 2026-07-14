@@ -368,6 +368,10 @@ paths:
       tags: [Wallets]
       operationId: createWallet
       summary: Создание кошелька
+      description: >
+        `is_default` эксклюзивен на пользователя: если передать `true`, флаг
+        автоматически снимается со всех остальных кошельков этого пользователя
+        в той же операции.
       requestBody:
         required: true
         content:
@@ -416,6 +420,9 @@ paths:
       tags: [Wallets]
       operationId: updateWallet
       summary: Обновление кошелька
+      description: >
+        `is_default=true` снимает флаг со всех остальных кошельков этого
+        пользователя — эксклюзивность гарантируется на уровне сервиса.
       requestBody:
         content:
           application/json:
@@ -498,6 +505,9 @@ paths:
       tags: [Categories]
       operationId: createCategory
       summary: Создание категории
+      description: >
+        Вложенность ограничена одним уровнем: `parent_id` обязан указывать на
+        категорию без собственного родителя (root-категорию).
       requestBody:
         required: true
         content:
@@ -546,6 +556,10 @@ paths:
       tags: [Categories]
       operationId: updateCategory
       summary: Обновление категории
+      description: >
+        Вложенность ограничена одним уровнем: новый `parent_id` обязан указывать на
+        root-категорию, а категория с собственными детьми не может получить
+        родителя (сначала нужно переподчинить/удалить её детей).
       requestBody:
         content:
           application/json:
