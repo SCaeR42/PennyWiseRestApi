@@ -46,8 +46,12 @@ final class AuthController
 
     public function logout(Request $request): Response
     {
-        // JWT — stateless: доступ уже проверен AuthMiddleware, клиент удаляет токены
-        // на своей стороне; access-токен и так истечёт по JWT_TTL.
+        // Отзывает все refresh-токены пользователя (см. AuthService::refresh() —
+        // ротация + reuse-detection). Access-токен ещё доживёт свои оставшиеся
+        // секунды до истечения JWT_TTL — осознанный компромисс (SDD 3.2.2):
+        // проверка access-токена остаётся O(1)/stateless на каждый запрос.
+        $this->service->logout($request->userId());
+
         return Response::success(['message' => 'Logged out']);
     }
 }

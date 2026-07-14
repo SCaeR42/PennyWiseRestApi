@@ -44,4 +44,32 @@ final class JwtTest extends TestCase
         $this->expectException(UnauthorizedException::class);
         (new Jwt('different-secret-also-at-least-32-bytes!'))->decode($token);
     }
+
+    public function testIssueRespectsExplicitJti(): void
+    {
+        $jwt = new Jwt(self::TEST_SECRET);
+        $token = $jwt->issue(['sub' => 1, 'jti' => 'my-explicit-jti'], 3600);
+
+        self::assertSame('my-explicit-jti', $jwt->decode($token)['jti']);
+    }
+
+    public function testIssueGeneratesRandomJtiWhenNotProvided(): void
+    {
+        $jwt = new Jwt(self::TEST_SECRET);
+
+        $first = $jwt->decode($jwt->issue(['sub' => 1], 3600))['jti'];
+        $second = $jwt->decode($jwt->issue(['sub' => 1], 3600))['jti'];
+
+        self::assertNotSame($first, $second);
+    }
+
+    public function testIssueAlwaysForcesIatAndExpEvenIfClaimsTrySetThem(): void
+    {
+        $jwt = new Jwt(self::TEST_SECRET);
+        $token = $jwt->issue(['sub' => 1, 'iat' => 1, 'exp' => 2], 3600);
+
+        $claims = $jwt->decode($token);
+
+        self::assertGreaterThan(2, $claims['exp'], 'exp from $claims must not override the computed one');
+    }
 }

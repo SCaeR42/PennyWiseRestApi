@@ -17,14 +17,20 @@ final class Jwt
     {
     }
 
+    /**
+     * $claims может задать свой 'jti' (например, Auth-модулю нужно знать jti
+     * refresh-токена заранее, чтобы сохранить его в БД для ротации) — иначе
+     * генерируется случайный. 'iat'/'exp' в $claims игнорируются: их всегда
+     * выставляет этот метод.
+     */
     public function issue(array $claims, int $ttlSeconds): string
     {
         $now = time();
-        $payload = array_merge($claims, [
-            'iat' => $now,
-            'exp' => $now + $ttlSeconds,
-            'jti' => bin2hex(random_bytes(8)),
-        ]);
+        $payload = array_merge(
+            ['jti' => bin2hex(random_bytes(8))],
+            $claims,
+            ['iat' => $now, 'exp' => $now + $ttlSeconds],
+        );
 
         return FirebaseJwt::encode($payload, $this->secret, self::ALGO);
     }

@@ -80,6 +80,13 @@ paths:
       tags: [Auth]
       operationId: refreshToken
       summary: Обновление access-токена по refresh-токену
+      description: >
+        Refresh-токен одноразовый (rotation): при успешном запросе старый jti тут же
+        помечается использованным, а клиенту выдаётся новая пара — старый
+        refresh_token больше не примется. Повторное предъявление уже
+        использованного refresh_token трактуется как компрометация токена и
+        немедленно отзывает **все** активные сессии пользователя
+        (код ошибки `REFRESH_TOKEN_REUSED`, см. SDD 3.2.2).
       security: []
       requestBody:
         required: true
@@ -101,13 +108,36 @@ paths:
         '400':
           $ref: '#/components/responses/ValidationError'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          description: >
+            Невалидный/просроченный/неизвестный refresh-токен, либо обнаружено
+            повторное использование уже отозванного токена (`REFRESH_TOKEN_REUSED`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                unrecognized:
+                  summary: Токен не найден/просрочен
+                  value:
+                    success: false
+                    error: { code: UNAUTHORIZED, message: "Refresh token not recognized" }
+                reused:
+                  summary: Обнаружено повторное использование — все сессии отозваны
+                  value:
+                    success: false
+                    error: { code: REFRESH_TOKEN_REUSED, message: "Refresh token reuse detected — all sessions have been revoked" }
 
   /auth/logout:
     post:
       tags: [Auth]
       operationId: logout
-      summary: "Инвалидация токена (стейтлес: клиент должен удалить токены у себя)"
+      summary: Отзыв всех refresh-токенов пользователя
+      description: >
+        Отзывает все активные refresh-токены пользователя (разлогин "везде", без
+        разделения по устройствам — см. SDD 10). Текущий access-токен при этом не
+        аннулируется мгновенно — он остаётся технически валиден до истечения
+        собственного `exp` (по умолчанию ≤ `JWT_TTL` = 900 сек), это осознанный
+        компромисс ради stateless-проверки на каждый запрос (см. SDD 3.2.2).
       responses:
         '200':
           description: OK
@@ -1030,7 +1060,7 @@ components:
             access_token: { type: string }
             refresh_token: { type: string }
             token_type: { type: string, example: Bearer }
-            expires_in: { type: integer, example: 3600 }
+            expires_in: { type: integer, example: 900 }
 
     Account:
       type: object
