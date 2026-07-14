@@ -11,6 +11,11 @@ use App\Middleware\CorsMiddleware;
 
 final class Kernel
 {
+    // HS256 требует ключ длиной от 32 байт (256 бит) — столько же требует
+    // firebase/php-jwt при encode()/decode(). Проверяем здесь, а не там,
+    // чтобы ловить неверный конфиг сразу при старте, а не на первом логине.
+    private const JWT_SECRET_MIN_BYTES = 32;
+
     private const MIDDLEWARE_MAP = [
         'auth' => AuthMiddleware::class,
     ];
@@ -40,14 +45,31 @@ final class Kernel
 
     public function __construct()
     {
+        $jwtSecret = $this->assertJwtSecretIsConfigured();
+
         $this->container = new Container();
         $this->router = new Router();
 
         $this->container->instance(Router::class, $this->router);
         $this->container->singleton(\PDO::class, static fn () => Database::connection());
-        $this->container->singleton(Jwt::class, static fn () => new Jwt((string) ($_ENV['JWT_SECRET'] ?? '')));
+        $this->container->singleton(Jwt::class, static fn () => new Jwt($jwtSecret));
 
         $this->loadModules();
+    }
+
+    private function assertJwtSecretIsConfigured(): string
+    {
+        $secret = (string) ($_ENV['JWT_SECRET'] ?? '');
+
+        if (mb_strlen($secret, '8bit') < self::JWT_SECRET_MIN_BYTES) {
+            throw new \RuntimeException(sprintf(
+                'JWT_SECRET is missing or shorter than %d bytes (HS256 requires at least a 256-bit key). '
+                . 'Set a proper JWT_SECRET in .env or the docker-compose environment.',
+                self::JWT_SECRET_MIN_BYTES,
+            ));
+        }
+
+        return $secret;
     }
 
     private function loadModules(): void

@@ -15,7 +15,7 @@ services:
       DB_NAME: ${DB_NAME:-pennywise}
       DB_USER: ${DB_USER:-pennywise_user}
       DB_PASSWORD: ${DB_PASSWORD:-secret}
-      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-random-secret}
+      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-random-secret-of-at-least-32-bytes}
       JWT_TTL: ${JWT_TTL:-3600}
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-604800}
       APP_ENV: ${APP_ENV:-production}
