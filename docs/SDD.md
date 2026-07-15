@@ -397,18 +397,33 @@ src/Modules/EmailVerification/
 **Связи (FK):**
 - `accounts.user_id` → `users.id`
 - `wallets.user_id` → `users.id`
-- `wallets.account_id` → `accounts.id` (nullable — виртуальный/наличный кошелёк может быть не привязан ни к одному счёту)
+- `wallets.account_id` → `accounts.id` **+ user_id** (составной, см. ниже; nullable — виртуальный/наличный кошелёк может быть не привязан ни к одному счёту)
 - `categories.user_id` → `users.id`
-- `categories.parent_id` → `categories.id` (self-reference, вложенные категории)
+- `categories.parent_id` → `categories.id` **+ user_id** (составной, self-reference, вложенные категории)
 - `tags.user_id` → `users.id`
 - `settings.user_id` → `users.id`
 - `transactions.user_id` → `users.id`
-- `transactions.wallet_id` → `wallets.id`
-- `transactions.category_id` → `categories.id`
+- `transactions.wallet_id` → `wallets.id` **+ user_id** (составной)
+- `transactions.category_id` → `categories.id` **+ user_id** (составной)
 - `transaction_tag.transaction_id` → `transactions.id`
 - `transaction_tag.tag_id` → `tags.id`
 
 Связь транзакций и тегов — только через `transaction_tag` (many-to-many); прямого FK между `transactions` и `tags` нет.
+
+### 4.1.1 Составные (tenant-scoped) FK — межпользовательская изоляция на уровне БД
+
+Сервисный слой и раньше проверял принадлежность связанных сущностей текущему пользователю (`findForUser()` перед созданием/обновлением) — но это была защита исключительно в PHP-коде: сама БД не мешала вставить, скажем, `transactions.wallet_id` чужого пользователя, если бы проверку в сервисе забыли/убрали при рефакторинге. Для финансового домена этого недостаточно — миграция `010_add_tenant_scoped_composite_foreign_keys.sql` добавляет вторую, независимую линию защиты прямо в БД:
+
+- `accounts`, `wallets`, `categories` получили `UNIQUE(id, user_id)` (не мешает — `id` и так уникален сам по себе);
+- `wallets.account_id`, `categories.parent_id` (self-reference), `transactions.wallet_id`, `transactions.category_id` стали составными FK вида `FOREIGN KEY (x_id, user_id) REFERENCES parent (id, user_id)`.
+
+Теперь **физически невозможно** вставить строку, где `x_id` указывает на сущность одного пользователя, а `user_id` самой строки — на другого: движок MySQL отклонит такую вставку/обновление на уровне constraint, независимо от того, что делает или не делает сервисный слой.
+
+**Побочный эффект: `account_id`/`parent_id` были `ON DELETE SET NULL`, стали `ON DELETE RESTRICT`.** У составного FK нельзя частично применить `SET NULL` только к одной колонке связки — `user_id` в `wallets`/`categories` не `NULL`-able, поэтому `SET NULL` для всей пары колонок был бы противоречив. Практическое следствие: удаление счёта с привязанными кошельками или root-категории с детьми теперь **блокируется**, а не тихо отвязывает их. `AccountService::delete()`/`CategoryService::delete()` ловят `PDOException` с SQLSTATE `23000` и превращают её в понятный `422` (`ACCOUNT_HAS_LINKED_WALLETS` / `CATEGORY_IN_USE`) вместо голого 500. Это заодно закрывает и преэкзистинг-баг: `transactions.category_id` был `ON DELETE RESTRICT` с самого начала, и удаление категории с транзакциями до этой правки уже падало необработанным 500.
+
+**`transaction_tag` не входит в эту схему** — это чистая junction-таблица без `user_id`, составной FK потребовал бы денормализации (добавления `user_id` в саму join-таблицу). Связь транзакция↔тег остаётся под защитой только сервисного слоя (`TransactionService::assertTagsOwnership()`), без backstop на уровне БД.
+
+Обе линии защиты (сервисная и БД) покрыты интеграционными тестами в `tests/Integration/` — см. 8.4.
 
 ### 4.2 Описание таблиц
 
@@ -739,6 +754,24 @@ APP_DEBUG=false
 На этом стабе построены:
 - `MxRecordCheckerTest` — MX есть → `valid`; MX нет, но есть A/AAAA (fallback) → `valid`; ничего не резолвится → `no_mx_record`; резолвер эмитит warning → `lookup_failed`; кэширование по домену в рамках одного экземпляра (case-insensitive).
 - `EmailVerificationServiceTest` — интеграционно подтверждает, что для email с невалидным форматом DNS-резолвер вообще не вызывается (счётчик обращений — 0), а в смешанном батче резолвятся только домены с корректным форматом.
+
+### 8.4 Интеграционные тесты (реальный MySQL)
+
+`tests/Unit/` целиком не трогает БД (см. 8.1–8.3) — быстрый набор по умолчанию (`vendor/bin/phpunit`). Межпользовательская изоляция (4.1.1) проверяется отдельным набором `tests/Integration/`, требующим реальное подключение к MySQL, поэтому вынесена в отдельный конфиг `phpunit.integration.xml`, а не в основной `phpunit.xml` — чтобы обычный `vendor/bin/phpunit` оставался быстрым и не требовал поднятой БД.
+
+```bash
+# В контейнере (DB_HOST=db уже в окружении)
+docker compose exec app vendor/bin/phpunit -c phpunit.integration.xml
+
+# Локально, вне Docker (БД доступна на хосте по проброшенному порту)
+DB_HOST=127.0.0.1 DB_PORT=3306 vendor/bin/phpunit -c phpunit.integration.xml
+```
+
+Каждый тест оборачивается в свою БД-транзакцию с `rollBack()` в `tearDown()` (`IsolatedTransactionTestCase`) — тестовые пользователи/кошельки/категории не остаются в БД и не задевают существующие данные (включая demo-аккаунты вроде Alice/Bob).
+
+Два файла проверяют одни и те же четыре связи (`wallets.account_id`, `categories.parent_id`, `transactions.wallet_id`, `transactions.category_id`) на разных уровнях:
+- `ServiceLayerCrossTenantIsolationTest` — через реальные `*Service` классы, ожидает `BadRequestException` (регрессия на `findForUser()`-проверки).
+- `DatabaseCompositeForeignKeyTest` — в обход сервисного слоя, прямой `INSERT`/`DELETE` через PDO, ожидает `PDOException` — доказывает, что составные FK из 4.1.1 реально работают на уровне движка, а не просто существуют в файле миграции.
 
 ---
 

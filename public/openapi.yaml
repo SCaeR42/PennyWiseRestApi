@@ -341,11 +341,20 @@ paths:
       summary: Удаление счёта
       responses:
         '204':
-          description: "Удалено (привязанные wallets.account_id становятся NULL)"
+          description: Удалено
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          description: "Есть кошельки, привязанные к этому счёту (`ACCOUNT_HAS_LINKED_WALLETS`) — сначала отвязать/удалить их"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: { code: ACCOUNT_HAS_LINKED_WALLETS, message: "Cannot delete account: it is still linked to one or more wallets" }
 
   /wallets:
     get:
@@ -593,6 +602,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          description: "Есть дочерние категории или транзакции, ссылающиеся на эту категорию (`CATEGORY_IN_USE`)"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: { code: CATEGORY_IN_USE, message: "Cannot delete category: it is still referenced by child categories or transactions" }
 
   /tags:
     get:

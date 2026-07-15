@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Modules\Accounts\Services;
 
 use App\Core\Exceptions\NotFoundException;
+use App\Core\Exceptions\ProcessingException;
 use App\Modules\Accounts\DTO\CreateAccountDTO;
 use App\Modules\Accounts\DTO\UpdateAccountDTO;
 use App\Modules\Accounts\Models\Account;
@@ -53,6 +54,18 @@ final class AccountService
     public function delete(int $id, int $userId): void
     {
         $this->getForUser($id, $userId);
-        $this->accounts->delete($id, $userId);
+
+        try {
+            $this->accounts->delete($id, $userId);
+        } catch (\PDOException $e) {
+            if ($e->getCode() === '23000') {
+                throw new ProcessingException(
+                    'Cannot delete account: it is still linked to one or more wallets',
+                    'ACCOUNT_HAS_LINKED_WALLETS',
+                );
+            }
+
+            throw $e;
+        }
     }
 }

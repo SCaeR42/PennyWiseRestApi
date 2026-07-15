@@ -126,12 +126,12 @@ health — [http://api/v1/healths/](http://localhost:8080/api/v1/health)
 
 ## Тестирование
 
-Проект покрыт unit- и интеграционными тестами (**PHPUnit 11**, 34 теста). Конфигурация — [`phpunit.xml`](phpunit.xml), тесты находятся в директории [`tests/`](tests/).
+Проект покрыт unit- и интеграционными тестами (**PHPUnit 11**, 40 unit + 10 integration). Конфигурация unit-набора — [`phpunit.xml`](phpunit.xml) (по умолчанию, без БД), интеграционного — [`phpunit.integration.xml`](phpunit.integration.xml) (требует реальный MySQL). Тесты — в [`tests/`](tests/).
 
 ### Запуск тестов
 
 ```bash
-# Локально — запустить все тесты
+# Локально — unit-тесты (быстро, БД не нужна)
 vendor\bin\phpunit
 
 # Локально — запустить конкретный файл
@@ -140,11 +140,17 @@ vendor\bin\phpunit tests/Unit/Core/ValidationTest.php
 # Локально — фильтрация по имени теста
 vendor\bin\phpunit --filter testMethodName
 
-# В Docker-контейнере
+# В Docker-контейнере — unit-тесты
 docker compose exec app vendor/bin/phpunit
 
 # Разовый запуск без запущенных контейнеров
 docker compose run --rm app vendor/bin/phpunit
+
+# Интеграционные тесты — в контейнере (DB_HOST=db уже в окружении)
+docker compose exec app vendor/bin/phpunit -c phpunit.integration.xml
+
+# Интеграционные тесты — локально, вне Docker (БД на проброшенном порту хоста)
+DB_HOST=127.0.0.1 DB_PORT=3306 vendor/bin/phpunit -c phpunit.integration.xml
 ```
 
 ### Структура тестов
@@ -153,14 +159,22 @@ docker compose run --rm app vendor/bin/phpunit
 tests/
 ├── Support/
 │   └── DnsResolverStub.php              # Мок checkdnsrr() для MxRecordChecker (см. ниже)
-└── Unit/
-    ├── Core/                             # Router, Container, Jwt, Validation
-    └── Modules/
-        └── EmailVerification/
-            ├── EmailFormatValidatorTest.php
-            ├── MxRecordCheckerTest.php          # MX / A-fallback / no_mx_record / lookup_failed / кэш
-            └── EmailVerificationServiceTest.php # invalid_format не вызывает DNS-резолвер вообще
+├── Unit/                                 # Без БД, дефолтный набор
+│   ├── Core/                             # Router, Container, Jwt, Validation, Kernel
+│   └── Modules/
+│       └── EmailVerification/
+│           ├── EmailFormatValidatorTest.php
+│           ├── MxRecordCheckerTest.php          # MX / A-fallback / no_mx_record / lookup_failed / кэш
+│           └── EmailVerificationServiceTest.php # invalid_format не вызывает DNS-резолвер вообще
+└── Integration/                          # Реальный MySQL, отдельный конфиг (phpunit.integration.xml)
+    ├── IsolatedTransactionTestCase.php          # Каждый тест — своя БД-транзакция с rollback
+    ├── ServiceLayerCrossTenantIsolationTest.php # Чужая сущность → BadRequestException (сервисный слой)
+    └── DatabaseCompositeForeignKeyTest.php      # То же самое в обход сервисов → PDOException (БД)
 ```
+
+### Межпользовательская изоляция: сервис + БД
+
+Владение проверяется дважды, независимо друг от друга: сервисный слой (`findForUser()` перед записью) и составные FK `(id, user_id)` в самой БД — подробности и мотивация в [SDD](docs/SDD.md), разделы 4.1.1 и 8.4. Второе — не дублирование первого: если проверку в сервисе однажды забудут дописать при рефакторинге, вставка всё равно упрётся в ограничение БД, а не тихо создаст запись с чужими данными.
 
 ### Мок DNS-резолвера
 

@@ -6,6 +6,7 @@ namespace App\Modules\Categories\Services;
 
 use App\Core\Exceptions\BadRequestException;
 use App\Core\Exceptions\NotFoundException;
+use App\Core\Exceptions\ProcessingException;
 use App\Modules\Categories\DTO\CreateCategoryDTO;
 use App\Modules\Categories\DTO\UpdateCategoryDTO;
 use App\Modules\Categories\Models\Category;
@@ -65,7 +66,19 @@ final class CategoryService
     public function delete(int $id, int $userId): void
     {
         $this->getForUser($id, $userId);
-        $this->categories->delete($id, $userId);
+
+        try {
+            $this->categories->delete($id, $userId);
+        } catch (\PDOException $e) {
+            if ($e->getCode() === '23000') {
+                throw new ProcessingException(
+                    'Cannot delete category: it is still referenced by child categories or transactions',
+                    'CATEGORY_IN_USE',
+                );
+            }
+
+            throw $e;
+        }
     }
 
     /**
